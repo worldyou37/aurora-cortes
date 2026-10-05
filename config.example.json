@@ -1,0 +1,22 @@
+{
+  "posting_interval_hours": 6,
+  "max_clip_seconds": 60,
+  "min_clip_seconds": 18,
+  "language": "pt",
+  "whisper_model": "medium",
+  "youtube_privacy": "private",
+  "auto_publish": false,
+  "category_id": "22",
+  "made_for_kids": false,
+  "video_layout": "vertical_center",
+  "hashtag_strategy": "balanced",
+  "posting_mode": "scheduled",
+  "analysis_chunk_seconds": 900,
+  "chunk_overlap_seconds": 60,
+  "max_clips_per_chunk": 12,
+  "ollama_model": "qwen3:8b",
+  "publish_platforms": [
+    "youtube"
+  ],
+  "pipeline_paused": false
+}
