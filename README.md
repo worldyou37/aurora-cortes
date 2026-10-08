@@ -26,6 +26,7 @@ O usuário escolhe o arquivo de vídeo no computador ou celular. A Aurora não b
 - Gera legendas, títulos, descrições e hashtags relacionadas ao conteúdo; tendências atuais são opcionais e dependem de uma chave da YouTube Data API.
 - Oferece layouts verticais prontos para os cortes.
 - Organiza uma fila com modo guiado, modo automático e intervalo de publicação configurável em horas.
+- Usa IA local por padrão; opcionalmente, permite configurar um provedor externo compatível com Chat Completions e JSON Schema. A transcrição do áudio segue local; os textos dos trechos e os pedidos de metadados são enviados ao provedor escolhido.
 - Permite escolher YouTube, Instagram e TikTok e consultar o resultado por rede.
 - Inclui tutorial e uma página de conexão que explica cada credencial, com verificações que não publicam.
 - Permite enviar um teste privado para YouTube.
@@ -81,7 +82,12 @@ O fluxo preparado pela Aurora usa Instagram Graph API com Facebook Login. Requer
 - **Intervalo:** escolha o tempo entre publicações em horas, incluindo frações, como 2,5 horas.
 - **Fila:** acompanhe o andamento, pause novas ações e escolha modo guiado ou automático.
 - **Credenciais:** ficam localmente no computador. Não publique nem compartilhe `youtube_client_secret.json`, `token.json` ou `social_secrets.json`.
-- **Configuração avançada:** usuários familiarizados com linha de comando podem editar `config.json`; o arquivo inicial está em `config.example.json`.
+- **IA externa opcional:** no painel, escolha “Provedor externo”, informe o endereço HTTPS compatível com OpenAI, o modelo e a chave da API e salve. O botão “Testar conexão da IA externa” verifica o acesso antes de processar vídeos. A seleção inicial continua usando a IA local.
+- **Configuração avançada:** usuários familiarizados com linha de comando podem editar `config.json`; o arquivo inicial está em `config.example.json`. A chave externa fica em `ai_secrets.json`, arquivo local ignorado pelo Git.
+
+## Diagnóstico e logs
+
+O painel verifica a configuração, a transcrição local, o Ollama e o modelo, o FFmpeg, o espaço em disco e as permissões das pastas. O log geral fica em `state/aurora.log`; ele registra erros e eventos do servidor e da fila, com rotação automática para limitar o espaço usado. Se precisar compartilhar o log para investigar um problema, confira antes se ele não contém nomes de arquivos ou caminhos locais que prefira manter privados.
 
 ## Gratuito e apoio
 

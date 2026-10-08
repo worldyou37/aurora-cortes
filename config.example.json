@@ -15,6 +15,9 @@
   "chunk_overlap_seconds": 60,
   "max_clips_per_chunk": 12,
   "ollama_model": "qwen3:8b",
+  "ai_provider": "local",
+  "external_ai_base_url": "",
+  "external_ai_model": "",
   "publish_platforms": [
     "youtube"
   ],

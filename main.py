@@ -2,6 +2,7 @@
 """Local-first authorized video clipping and YouTube scheduling MVP."""
 from __future__ import annotations
 import json, logging, os, sqlite3, subprocess, time, re, shutil, math, urllib.request, urllib.parse, urllib.error
+from bisect import bisect_left
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -42,6 +43,31 @@ def social_secrets():
     except (OSError,json.JSONDecodeError): return {}
 
 
+def ai_secrets():
+    path=ROOT/"ai_secrets.json"
+    try: return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError,json.JSONDecodeError): return {}
+
+
+def analysis_ai_client(cfg):
+    """Build the selected local or user-configured OpenAI-compatible client."""
+    from openai import OpenAI
+    provider=cfg.get("ai_provider","local")
+    if provider=="local":
+        return OpenAI(base_url=os.getenv("OLLAMA_BASE_URL","http://127.0.0.1:11434/v1"),api_key="ollama"),cfg.get("ollama_model","qwen3:8b")
+    if provider!="external": raise ValueError("Provedor de IA inválido. Escolha a IA local ou um serviço externo compatível.")
+    base_url=str(cfg.get("external_ai_base_url","")).strip().rstrip("/")
+    model=str(cfg.get("external_ai_model","")).strip()
+    api_key=str(ai_secrets().get("api_key","")).strip()
+    if not base_url or not model or not api_key:
+        raise RuntimeError("Configure o endereço, o modelo e a chave do provedor externo de IA.")
+    endpoint=urllib.parse.urlsplit(base_url)
+    local_http=endpoint.scheme=="http" and endpoint.hostname in {"localhost","127.0.0.1","::1"}
+    if not endpoint.hostname or (endpoint.scheme!="https" and not local_http) or endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
+        raise ValueError("O provedor externo precisa usar HTTPS (HTTP só é aceito para localhost).")
+    return OpenAI(base_url=base_url,api_key=api_key),model
+
+
 def db_conn():
     con = sqlite3.connect(DB)
     con.execute("""CREATE TABLE IF NOT EXISTS clips (
@@ -74,20 +100,35 @@ def db_conn():
     con.execute("""CREATE TABLE IF NOT EXISTS youtube_tests (
         id INTEGER PRIMARY KEY, clip_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'uploading',
         platform_id TEXT, error TEXT, created_at TEXT NOT NULL)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS processed_sources (
+        source TEXT PRIMARY KEY, processed_at TEXT NOT NULL, result TEXT NOT NULL DEFAULT '')""")
+    con.execute("CREATE TABLE IF NOT EXISTS pipeline_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    if not con.execute("SELECT 1 FROM pipeline_meta WHERE key='processed_sources_migrated'").fetchone():
+        con.execute("INSERT OR IGNORE INTO processed_sources(source,processed_at,result) SELECT DISTINCT source,?, 'existing_clips' FROM clips",
+                    (datetime.now(timezone.utc).isoformat(),))
+        con.execute("INSERT INTO pipeline_meta(key,value) VALUES('processed_sources_migrated','1')")
     con.commit()
     return con
 
 
 def already_processed(source: Path) -> bool:
     with db_conn() as con:
-        return con.execute("SELECT 1 FROM clips WHERE source=? LIMIT 1", (str(source),)).fetchone() is not None
+        return con.execute("SELECT 1 FROM processed_sources WHERE source=?",(str(source),)).fetchone() is not None
+
+
+def mark_source_processed(source: Path, result: str):
+    with db_conn() as con:
+        con.execute("INSERT OR REPLACE INTO processed_sources(source,processed_at,result) VALUES(?,?,?)",
+                     (str(source),datetime.now(timezone.utc).isoformat(),result))
 
 
 def transcribe(source: Path, cfg):
     from faster_whisper import WhisperModel
+    started=time.monotonic()
+    set_progress("transcribing",source.name,"Carregando o modelo de transcrição local…",5)
     model = WhisperModel(cfg.get("whisper_model", "small"), device="cpu", compute_type="int8")
     segments, _ = model.transcribe(str(source), language=cfg.get("language", "pt"), vad_filter=True, word_timestamps=True)
-    result=[]
+    result=[]; last_report=started
     for s in segments:
         text=s.text.strip()
         if not text: continue
@@ -95,6 +136,12 @@ def transcribe(source: Path, cfg):
         start=float(words[0].start) if words else float(s.start)
         end=float(words[-1].end) if words else float(s.end)
         result.append({"start":start,"end":end,"text":text})
+        now=time.monotonic()
+        if now-last_report>=2:
+            elapsed=int(now-started)
+            set_progress("transcribing",source.name,
+                f"Transcrevendo · {len(result)} segmentos reconhecidos · áudio até {int(end//60)} min {int(end%60):02d} s · {elapsed} s decorridos",5)
+            last_report=now
     return result
 
 
@@ -105,14 +152,18 @@ def candidate_windows(segments, cfg):
     duration=float(segments[-1]["end"])-float(segments[0]["start"])
     stride=max(12.0,duration/120.0)
     windows=[]; next_start=-1.0
+    ends=[float(segment["end"]) for segment in segments]
     for i, first in enumerate(segments):
         start=float(first["start"])
         if start < next_start: continue
         for target in targets:
             # Choose the nearest complete speech segment boundary to the target length.
-            choices=[k for k in range(i,len(segments)) if minimum <= float(segments[k]["end"])-start <= maximum]
-            if not choices: continue
-            j=min(choices,key=lambda k:abs((float(segments[k]["end"])-start)-target))
+            lower=bisect_left(ends,start+minimum,i)
+            upper=bisect_left(ends,start+maximum+1e-9,lower)
+            if lower>=upper: continue
+            target_index=bisect_left(ends,start+target,lower,upper)
+            candidates={max(lower,min(upper-1,target_index)),max(lower,min(upper-1,target_index-1))}
+            j=min(candidates,key=lambda k:abs((ends[k]-start)-target))
             end=float(segments[j]["end"])
             words=" ".join(s["text"] for s in segments[i:j+1]).strip()
             if len(words)<70: continue
@@ -164,12 +215,11 @@ def current_topic_trends(topics):
         return []
 
 
-def select_moments(segments, cfg):
-    from openai import OpenAI
-    client=OpenAI(base_url=os.getenv("OLLAMA_BASE_URL","http://127.0.0.1:11434/v1"),api_key="ollama")
-    model=cfg.get("ollama_model","qwen3:8b")
+def select_moments(segments, cfg, progress=None):
+    client,model=analysis_ai_client(cfg)
     windows=candidate_windows(segments,cfg)
     if not windows: return []
+    if progress: progress(f"A IA está comparando {len(windows)} trechos candidatos e agrupando os assuntos.")
     max_clips=max(1,min(20,int(cfg.get("max_clips_per_chunk",12))))
     schema = {"type":"object","properties":{"clips":{"type":"array","items":{"type":"object","properties":{
         "window_id":{"type":"string"},"topic":{"type":"string"},"scope":{"type":"string"},
@@ -190,6 +240,7 @@ def select_moments(segments, cfg):
         picked.append({**item,"start":w["start"],"end":w["end"],"text":w["text"]})
     if not picked: return []
 
+    if progress: progress(f"A IA selecionou {len(picked)} trechos. Agora está escrevendo títulos, descrições e hashtags.")
     trends=current_topic_trends(list(dict.fromkeys(x["topic"] for x in picked)))
     metadata_schema={"type":"object","properties":{"clips":{"type":"array","items":{"type":"object","properties":{
         "window_id":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},
@@ -247,7 +298,7 @@ def ffmpeg_binary():
         raise RuntimeError("Instale as dependências do projeto (incluem FFmpeg) ou instale FFmpeg no PATH.") from exc
 
 
-def render(source, clip, segments, index, cfg):
+def render(source, clip, segments, index, cfg, progress=None):
     stem=source.stem
     output=Path(cfg.get("output_folder") or OUTPUT).expanduser()
     output.mkdir(parents=True,exist_ok=True)
@@ -272,27 +323,56 @@ def render(source, clip, segments, index, cfg):
     else:
         vf=f"crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=1080:1920,{subtitles}"
         command=common+["-vf",vf]
-    command += ["-c:v","libx264","-preset","medium","-crf","21","-c:a","aac","-b:a","128k","-movflags","+faststart",str(mp4)]
-    subprocess.run(command,check=True,capture_output=True,text=True)
+    duration=max(0.1,float(clip["end"])-float(clip["start"]))
+    command += ["-c:v","libx264","-preset","medium","-crf","21","-c:a","aac","-b:a","128k","-movflags","+faststart",
+        "-progress","pipe:1","-stats_period","1","-nostats",str(mp4)]
+    process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+    tail=[]
+    try:
+        for line in process.stdout:
+            value=line.strip(); tail.append(value)
+            if len(tail)>40: tail.pop(0)
+            if progress and value.startswith("out_time="):
+                clock=value.partition("=")[2]
+                try:
+                    hours,minutes,seconds=clock.split(":")
+                    progress(min(100,max(0,100*(int(hours)*3600+int(minutes)*60+float(seconds))/duration)))
+                except (ValueError,TypeError): pass
+        return_code=process.wait()
+    except Exception:
+        process.kill(); process.wait(); raise
+    if return_code:
+        raise RuntimeError("FFmpeg não conseguiu preparar o corte: "+"\n".join(tail)[-3000:])
     return mp4
 
 
 def process_incoming(cfg):
     for source in sorted(p for p in INCOMING.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTS):
         if already_processed(source): continue
-        set_progress("transcribing", source.name, "Convertendo fala em texto", 5)
+        set_progress("transcribing", source.name, "Carregando o modelo de transcrição local…", 5)
         logging.info("Transcrevendo %s", source.name)
         segments=transcribe(source,cfg)
-        if not segments: logging.warning("Sem fala detectável em %s",source.name); continue
+        if not segments:
+            logging.warning("Sem fala detectável em %s",source.name)
+            mark_source_processed(source,"no_speech")
+            set_progress("ready",source.name,"Análise concluída: não encontrei fala suficiente para criar cortes.",100)
+            continue
         chunk_seconds=float(cfg.get("analysis_chunk_seconds",900))
         overlap=float(cfg.get("chunk_overlap_seconds",60))
+        duration=max(0,float(segments[-1]["end"])-float(segments[0]["start"]))
+        total_chunks=max(1,math.ceil(max(0,duration-overlap)/max(1,chunk_seconds-overlap)))
         clips=[]; chunk_start=float(segments[0]["start"]); accepted=[]
+        chunk_index=0
         while chunk_start < float(segments[-1]["end"]):
+            chunk_index+=1
             chunk_end=chunk_start+chunk_seconds
             subset=[s for s in segments if s["end"]>chunk_start and s["start"]<chunk_end]
             if subset:
-                set_progress("analyzing", source.name, "Identificando assuntos e escolhendo trechos", 35)
-                for clip in select_moments(subset,cfg):
+                base_percent=35+int(20*(chunk_index-1)/total_chunks)
+                set_progress("analyzing",source.name,f"Preparando bloco {chunk_index} de {total_chunks} para a IA · {len(subset)} segmentos de fala",base_percent)
+                def report_analysis(message,base=base_percent,index=chunk_index,total=total_chunks):
+                    set_progress("analyzing",source.name,f"Bloco {index}/{total}: {message}",base)
+                for clip in select_moments(subset,cfg,progress=report_analysis):
                     if any(min(clip["end"],old["end"])-max(clip["start"],old["start"])>8 for old in accepted):
                         continue
                     accepted.append(clip)
@@ -300,14 +380,25 @@ def process_incoming(cfg):
             if chunk_end>=float(segments[-1]["end"]): break
             chunk_start=chunk_end-overlap
         clips.sort(key=lambda item:item["start"])
-        if not clips: logging.info("Nenhum trecho adequado em %s",source.name); continue
+        if not clips:
+            logging.info("Nenhum trecho adequado em %s",source.name)
+            mark_source_processed(source,"no_eligible_clips")
+            set_progress("ready",source.name,"Análise concluída. A IA não encontrou trechos com fala e contexto suficientes para virar cortes.",100)
+            continue
         for i,c in enumerate(clips,1):
-            set_progress("rendering", source.name, f"Preparando corte {i} de {len(clips)}", 60+int(35*(i-1)/max(1,len(clips))))
-            out=render(source,c,segments,i,cfg)
+            duration=max(0.1,float(c["end"])-float(c["start"]))
+            base=60+int(35*(i-1)/max(1,len(clips)))
+            def report_render(seconds_done,i=i,total=len(clips),base=base,duration=duration):
+                pct=min(100,max(0,seconds_done/duration*100))
+                overall=60+int(35*((i-1)+pct/100)/max(1,total))
+                set_progress("rendering",source.name,f"Renderizando corte {i}/{total} · {pct:.0f}% · {seconds_done:.1f}/{duration:.1f} s de vídeo",overall)
+            set_progress("rendering",source.name,f"Iniciando corte {i} de {len(clips)} com FFmpeg",base)
+            out=render(source,c,segments,i,cfg,progress=report_render)
             with db_conn() as con:
                 con.execute("INSERT OR IGNORE INTO clips(source,start,end,path,topic,scope,layout,title,description,hashtags,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                   (str(source),c["start"],c["end"],str(out),c["topic"],c["scope"],cfg.get("video_layout","vertical_center"),c["title"],c["description"],json.dumps(c["hashtags"],ensure_ascii=False),"ready",datetime.now(timezone.utc).isoformat()))
         logging.info("Criados %d cortes para %s",len(clips),source.name)
+        mark_source_processed(source,"clips_created")
         set_progress("ready", source.name, f"{len(clips)} cortes prontos na fila", 100)
 
 
@@ -325,6 +416,10 @@ def youtube_client():
         if not secret.exists(): raise RuntimeError("Adicione youtube_client_secret.json do seu projeto Google Cloud.")
         creds=InstalledAppFlow.from_client_secrets_file(str(secret),scope).run_local_server(port=0)
         token.write_text(creds.to_json(),encoding="utf-8")
+    # OAuth tokens grant access to the connected channel. Keep them private on
+    # Unix systems even when an older, permissively-created token already exists.
+    try: token.chmod(0o600)
+    except OSError: pass
     return build("youtube","v3",credentials=creds),MediaFileUpload
 
 

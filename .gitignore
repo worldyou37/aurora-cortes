@@ -1,9 +1,11 @@
 .venv/
+venv/
 .env
 config.json
 youtube_client_secret.json
 token.json
 social_secrets.json
+ai_secrets.json
 incoming/*
 !incoming/.gitkeep
 output/*
@@ -11,3 +13,4 @@ output/*
 state/*
 !state/.gitkeep
 __pycache__/
+:memory:.ses
