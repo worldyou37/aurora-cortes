@@ -22,10 +22,12 @@ try {
         throw 'Python 3.10 ou superior não foi encontrado. Instale-o pelo site python.org e execute este instalador novamente.'
     }
 
-    $pythonArgs = @('-3.10')
+    # Use the newest installed Python 3 so installations keep using current versions.
+    $pythonArgs = @('-3')
     & $pythonLauncher.Source @pythonArgs -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>$null
     if ($LASTEXITCODE -ne 0) {
-        $pythonArgs = @('-3')
+        # Older Python Launcher versions may not resolve the generic selector.
+        $pythonArgs = @('-3.10')
         & $pythonLauncher.Source @pythonArgs -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>$null
     }
     if ($LASTEXITCODE -ne 0) {

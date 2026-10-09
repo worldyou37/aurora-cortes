@@ -8,6 +8,8 @@
 
 Windows · Linux · painel adaptável a celular · IA executada no computador
 
+**Compatibilidade:** Python 3.10 ou qualquer versão posterior.
+
 </div>
 
 ---
@@ -29,6 +31,7 @@ O usuário escolhe o arquivo de vídeo no computador ou celular. A Aurora não b
 - Usa IA local por padrão; opcionalmente, permite configurar um provedor externo compatível com Chat Completions e JSON Schema. A transcrição do áudio segue local; os textos dos trechos e os pedidos de metadados são enviados ao provedor escolhido.
 - Permite escolher YouTube, Instagram e TikTok e consultar o resultado por rede.
 - Inclui tutorial e uma página de conexão que explica cada credencial, com verificações que não publicam.
+- Inclui uma página de ajudantes para reconhecer pessoas que contribuíram com recomendações úteis.
 - Permite enviar um teste privado para YouTube.
 - Inclui uma página opcional de apoio por Pix. Doar não é necessário para usar o projeto.
 
@@ -94,6 +97,10 @@ O painel verifica a configuração, a transcrição local, o Ollama e o modelo, 
 O uso da Aurora é gratuito e não há cobrança para usar a página de doação. As chamadas das APIs e os limites são controlados pelo Google, Meta e TikTok. A geração local requer espaço, memória e processamento do computador. Uma chave opcional da YouTube Data API pode ajudar a consultar sinais de tendências, dentro da quota que o Google atribuir ao projeto.
 
 Se desejar apoiar o desenvolvimento, abra a aba fixa **♡ Apoie a Aurora** no painel. A contribuição é voluntária. A chave Pix exibida ali pode ser copiada com um toque; confira os dados do destinatário no app do banco antes de confirmar.
+
+## Ajudantes
+
+Obrigado a [@Cyberpunkiano no X](https://x.com/Cyberpunkiano) pela recomendação útil ao projeto. A página **🤝 Ajudantes** no painel reúne pessoas cujas sugestões ajudam a Aurora a melhorar.
 
 ## Sobre quem fez
 

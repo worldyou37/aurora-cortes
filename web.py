@@ -209,6 +209,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Security-Policy","default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
             self.send_header("X-Content-Type-Options","nosniff"); self.send_header("Content-Length",str(len(raw)))
             self.end_headers(); self.wfile.write(raw)
+        elif path.path=="/ajudantes":
+            raw=(WEB/"ajudantes.html").read_bytes()
+            self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8")
+            self.send_header("Content-Security-Policy","default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
+            self.send_header("X-Content-Type-Options","nosniff"); self.send_header("Content-Length",str(len(raw)))
+            self.end_headers(); self.wfile.write(raw)
         elif path.path=="/api/health":
             host=lan_ip() if HOST in {"0.0.0.0",""} else HOST
             self.send_json({"app_id":APP_ID,"build":APP_BUILD,"url":f"http://{host}:{PORT}"})
