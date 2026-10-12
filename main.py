@@ -557,7 +557,7 @@ def publish_one(platform,row,cfg,secrets,multi):
 
 def publish_next(cfg):
     allowed={"youtube","instagram","tiktok"}
-    platforms=[p for p in cfg.get("publish_platforms",["youtube"]) if p in allowed]
+    platforms=[p for p in cfg.get("publish_platforms",[]) if p in allowed]
     if not platforms: return
     if len(platforms)>1 and cfg.get("posting_mode")=="scheduled":
         logging.warning("Publicação conjunta pausada: selecione o modo imediato para redes múltiplas.")

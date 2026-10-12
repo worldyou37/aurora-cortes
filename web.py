@@ -473,9 +473,9 @@ class Handler(BaseHTTPRequestHandler):
             if layout not in pipeline.VIDEO_LAYOUTS: raise ValueError("Layout inválido.")
             if strategy not in pipeline.HASHTAG_STRATEGIES: raise ValueError("Estratégia de hashtag inválida.")
             if mode not in pipeline.POSTING_MODES: raise ValueError("Modo de postagem inválido.")
-            platforms=body.get("publish_platforms",["youtube"])
-            if not isinstance(platforms,list) or not platforms or len(set(platforms))!=len(platforms) or set(platforms)-{"youtube","instagram","tiktok"}:
-                raise ValueError("Escolha ao menos uma rede social válida.")
+            platforms=body.get("publish_platforms",[])
+            if not isinstance(platforms,list) or len(set(platforms))!=len(platforms) or set(platforms)-{"youtube","instagram","tiktok"}:
+                raise ValueError("Escolha redes sociais válidas ou deixe todas desmarcadas para manter os cortes somente neste computador.")
             if len(platforms)>1 and mode=="scheduled": raise ValueError("Para publicar em várias redes na mesma rodada, escolha o modo de postagem imediato.")
             output=Path(body.get("output_folder") or pipeline.OUTPUT).expanduser().resolve()
             output.mkdir(parents=True,exist_ok=True)
