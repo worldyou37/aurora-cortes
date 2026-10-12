@@ -17,7 +17,7 @@ PORT=int(os.getenv("CLIPPER_PORT","8774"))
 HOST=os.getenv("CLIPPER_HOST","0.0.0.0")
 MAX_UPLOAD_BYTES=8*1024*1024*1024
 APP_ID="aurora-gloriosa-cortes"
-APP_BUILD="2026.10.07.3"
+APP_BUILD="2026.10.12.1"
 UPLOADS={}
 UPLOADS_LOCK=threading.Lock()
 PIPELINE_WAKE=threading.Event()
@@ -185,7 +185,48 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path=urlsplit(self.path)
-        if path.path=="/":
+        clip_video=re.fullmatch(r"/api/clips/(\d+)/video",path.path)
+        if clip_video:
+            headers_sent=False
+            try:
+                with pipeline.db_conn() as con:
+                    row=con.execute("SELECT path FROM clips WHERE id=?",(int(clip_video.group(1)),)).fetchone()
+                if not row:
+                    self.send_error(404,"Corte não encontrado."); return
+                video=Path(row[0])
+                if video.suffix.lower()!=".mp4" or not video.is_file():
+                    self.send_error(404,"Arquivo do corte não encontrado."); return
+                size=video.stat().st_size; start=0; end=size-1; status=200
+                requested_range=self.headers.get("Range")
+                if requested_range:
+                    match=re.fullmatch(r"bytes=(\d*)-(\d*)",requested_range.strip())
+                    if not match or (not match.group(1) and not match.group(2)):
+                        self.send_response(416); self.send_header("Content-Range",f"bytes */{size}"); self.send_header("Content-Length","0"); self.end_headers(); return
+                    if match.group(1):
+                        start=int(match.group(1)); end=int(match.group(2)) if match.group(2) else size-1
+                    else:
+                        length=int(match.group(2)); start=max(0,size-length); end=size-1
+                    if start>=size or end<start:
+                        self.send_response(416); self.send_header("Content-Range",f"bytes */{size}"); self.send_header("Content-Length","0"); self.end_headers(); return
+                    end=min(end,size-1); status=206
+                length=end-start+1
+                self.send_response(status); self.send_header("Content-Type","video/mp4"); self.send_header("Content-Length",str(length))
+                self.send_header("Accept-Ranges","bytes"); self.send_header("Cache-Control","no-store"); self.send_header("X-Content-Type-Options","nosniff")
+                if status==206: self.send_header("Content-Range",f"bytes {start}-{end}/{size}")
+                self.end_headers(); headers_sent=True
+                with video.open("rb") as stream:
+                    stream.seek(start); remaining=length
+                    while remaining:
+                        block=stream.read(min(1024*256,remaining))
+                        if not block: break
+                        self.wfile.write(block); remaining-=len(block)
+            except (BrokenPipeError,ConnectionResetError):
+                pass
+            except Exception as exc:
+                logging.exception("Falha ao reproduzir prévia do corte")
+                if not headers_sent: self.send_error(500,friendly_error(str(exc)))
+                else: self.close_connection=True
+        elif path.path=="/":
             raw=(WEB/"index.html").read_bytes()
             self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8")
             self.send_header("Content-Security-Policy","default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'")
@@ -397,15 +438,23 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError: pass
                 self.send_json({"ok":True,"message":"Arquivo do YouTube recebido com segurança. Agora autorize o canal usando o botão abaixo."}); return
             if route=="/api/approve":
-                clip_id=int(body.get("clip_id",0)); cfg=pipeline.config(); platforms=cfg.get("publish_platforms",["youtube"])
+                raw_ids=body.get("clip_ids")
+                if raw_ids is None: raw_ids=[body.get("clip_id",0)]
+                if not isinstance(raw_ids,list) or not raw_ids or len(raw_ids)>30: raise ValueError("Selecione de 1 a 30 cortes para liberar.")
+                clip_ids=list(dict.fromkeys(int(value) for value in raw_ids))
+                if any(value<=0 for value in clip_ids): raise ValueError("A seleção contém um corte inválido.")
+                cfg=pipeline.config(); platforms=cfg.get("publish_platforms",[])
+                if not platforms: raise ValueError("Marque e salve ao menos uma rede para publicar os cortes selecionados.")
                 with pipeline.db_conn() as con:
-                    clip=con.execute("SELECT id FROM clips WHERE id=?",(clip_id,)).fetchone()
-                    if not clip: raise ValueError("Esse corte não está mais na fila.")
-                    for platform in platforms:
-                        con.execute("INSERT OR IGNORE INTO platform_posts(clip_id,platform,status,approved) VALUES(?,?, 'ready',0)",(clip_id,platform))
-                        con.execute("UPDATE platform_posts SET approved=1,next_attempt_at=NULL,last_error=NULL WHERE clip_id=? AND platform=? AND status IN ('ready','failed')",(clip_id,platform))
+                    existing={row[0] for row in con.execute("SELECT id FROM clips WHERE id IN (%s)" % ",".join("?" for _ in clip_ids),clip_ids)}
+                    if existing!=set(clip_ids): raise ValueError("Um ou mais cortes selecionados não estão mais na fila.")
+                    con.execute("BEGIN IMMEDIATE")
+                    for clip_id in clip_ids:
+                        for platform in platforms:
+                            con.execute("INSERT OR IGNORE INTO platform_posts(clip_id,platform,status,approved) VALUES(?,?, 'ready',0)",(clip_id,platform))
+                            con.execute("UPDATE platform_posts SET approved=1,next_attempt_at=NULL,last_error=NULL WHERE clip_id=? AND platform=? AND status IN ('ready','failed')",(clip_id,platform))
                 PIPELINE_WAKE.set()
-                self.send_json({"ok":True,"message":"Corte liberado. Ele seguirá o intervalo configurado."}); return
+                self.send_json({"ok":True,"message":f"{len(clip_ids)} corte(s) liberado(s). A publicação seguirá as redes e o intervalo configurados."}); return
             if route=="/api/test-private":
                 clip_id=int(body.get("clip_id",0))
                 with pipeline.db_conn() as con:

@@ -70,7 +70,7 @@ Abra **🔗 Conectar redes** no painel. A página explica onde configurar cada a
 
 ### Instagram Reels
 
-O fluxo preparado pela Aurora usa Instagram Graph API com Facebook Login. Requer conta profissional (Criador ou Empresa) associada a uma Página do Facebook, um app Meta com as permissões necessárias e autorização da conta. A página orienta como obter o ID profissional e o token Meta. A Meta pode exigir revisão do app para determinados usos.
+Conectar o Instagram é opcional: você pode criar cortes e guardá-los no computador sem conectar nenhuma rede. Para publicar Reels, o fluxo preparado pela Aurora usa Instagram Graph API com Facebook Login. Requer conta profissional (Criador ou Empresa) associada a uma Página do Facebook, um app Meta com as permissões necessárias e autorização da conta. A página orienta como obter o ID profissional e o token Meta. O teste do Instagram apenas verifica o acesso, não publica conteúdo e não depende de configurar o YouTube. A Meta pode exigir revisão do app para determinados usos.
 
 ### TikTok
 
@@ -83,7 +83,7 @@ O fluxo preparado pela Aurora usa Instagram Graph API com Facebook Login. Requer
 - **Entrada:** escolha arquivos de vídeo no painel; formatos comuns como MP4, MOV, MKV, WEBM e M4V são aceitos.
 - **Saída:** os cortes são guardados em `output/` por padrão. O painel oferece um navegador de pastas para selecionar outro destino.
 - **Intervalo:** escolha o tempo entre publicações em horas, incluindo frações, como 2,5 horas.
-- **Fila:** acompanhe o andamento, pause novas ações e escolha modo guiado ou automático.
+- **Fila:** assista à prévia dos cortes no painel e, no modo guiado, selecione um ou vários cortes para liberar à publicação. A Aurora respeita as redes e o intervalo configurados. O modo automático publica os cortes novos sem pedir seleção.
 - **Credenciais:** ficam localmente no computador. Não publique nem compartilhe `youtube_client_secret.json`, `token.json` ou `social_secrets.json`.
 - **IA externa opcional:** no painel, escolha “Provedor externo”, informe o endereço HTTPS compatível com OpenAI, o modelo e a chave da API e salve. O botão “Testar conexão da IA externa” verifica o acesso antes de processar vídeos. A seleção inicial continua usando a IA local.
 - **Configuração avançada:** usuários familiarizados com linha de comando podem editar `config.json`; o arquivo inicial está em `config.example.json`. A chave externa fica em `ai_secrets.json`, arquivo local ignorado pelo Git.
